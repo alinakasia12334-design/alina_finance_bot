@@ -29,7 +29,7 @@ CATEGORIES = {
     "other": "📝 Другое"
 }
 
-# ========== ФРАЗЫ (БЕЗ ЗВЁЗДОЧЕК, ПО ОЧЕРЕДИ) ==========
+# ========== ФРАЗЫ (ПО ОЧЕРЕДИ) ==========
 PHRASES = {
     "budget_set": [
         "🎯 Окей, зайка. Бюджет на месяц — {amount} ₽. Давай без шопинг-истерик, ладно?",
@@ -176,7 +176,6 @@ def get_next_phrase(user_id, phrase_type):
     idx = phrase_indexes[key]
     phrase = phrases[idx]
     
-    # Следующий индекс (по кругу)
     phrase_indexes[key] = (idx + 1) % len(phrases)
     
     return phrase
@@ -200,15 +199,12 @@ def load_user_data(user_id):
                 data["budget"] = None
             if "transactions" not in data:
                 data["transactions"] = []
-            if "goals" not in data:
-                data["goals"] = []
             return data
     return {
         "usd": 0.0,
         "rub": 0,
         "transactions": [],
         "savings": [],
-        "goals": [],
         "budget": None,
         "last_report_month": None
     }
@@ -239,7 +235,8 @@ def is_allowed(user_id):
     return user_id in get_allowed_users()
 
 # ========== КЛАВИАТУРЫ ==========
-def get_admin_keyboard():
+def get_main_keyboard():
+    """Полная клавиатура для всех пользователей"""
     keyboard = ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
     buttons = [
         KeyboardButton("💎 Баланс"),
@@ -251,20 +248,31 @@ def get_admin_keyboard():
         KeyboardButton("📊 График трат"),
         KeyboardButton("📋 История"),
         KeyboardButton("🕊️ Отменить"),
-        KeyboardButton("⚙️ Настройки"),
-        KeyboardButton("👥 Пользователи")
+        KeyboardButton("⚙️ Настройки")
     ]
+    # Кнопка управления пользователями только для админа
+    if is_admin(message.chat.id) if hasattr(message, 'chat') else False:
+        buttons.append(KeyboardButton("👥 Пользователи"))
     keyboard.add(*buttons)
     return keyboard
 
-def get_user_keyboard():
+def get_keyboard_for_user(user_id):
+    """Возвращает клавиатуру в зависимости от прав пользователя"""
     keyboard = ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
     buttons = [
         KeyboardButton("💎 Баланс"),
         KeyboardButton("📊 Отчёты"),
+        KeyboardButton("➕ Доход"),
+        KeyboardButton("➖ Расход"),
+        KeyboardButton("🏦 Отложить"),
+        KeyboardButton("📈 Бюджет"),
         KeyboardButton("📊 График трат"),
-        KeyboardButton("📋 История")
+        KeyboardButton("📋 История"),
+        KeyboardButton("🕊️ Отменить"),
+        KeyboardButton("⚙️ Настройки")
     ]
+    if is_admin(user_id):
+        buttons.append(KeyboardButton("👥 Пользователи"))
     keyboard.add(*buttons)
     return keyboard
 
@@ -308,66 +316,81 @@ def get_savings_keyboard():
     )
     return keyboard
 
+# ========== ИНСТРУКЦИЯ ==========
+def get_instructions():
+    return (
+        "📚 ИНСТРУКЦИЯ ПО ИСПОЛЬЗОВАНИЮ\n━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        "💎 Баланс — показывает твои деньги:\n"
+        "   • Свободные (можно тратить)\n"
+        "   • Отложенные (копилка)\n"
+        "   • Итого и доллары\n\n"
+        "➕ Доход — добавляем деньги:\n"
+        "   • Вводишь сумму и описание (пример: 5000 зарплата)\n"
+        "   • Выбираешь валюту (рубли или доллары)\n\n"
+        "➖ Расход — тратим деньги:\n"
+        "   • Вводишь сумму и описание (пример: 1200 такси)\n"
+        "   • Выбираешь валюту\n"
+        "   • Выбираешь категорию (еда, транспорт и т.д.)\n\n"
+        "🏦 Отложить — копим на мечту:\n"
+        "   • Добавить деньги в копилку\n"
+        "   • Вернуть из копилки\n"
+        "   • Потратить из отложенного\n\n"
+        "📈 Бюджет — ставим лимит на месяц:\n"
+        "   • /budget 50000 — установить бюджет\n"
+        "   • Кнопка Бюджет — показывает остаток\n\n"
+        "📊 График трат — видно, куда ушли деньги:\n"
+        "   • Полоски по категориям за текущий месяц\n\n"
+        "📋 История — последние 15 операций\n\n"
+        "🕊️ Отменить — откатывает последнюю операцию\n\n"
+        "⚙️ Настройки — установить остаток или очистить всё\n\n"
+        "🆔 /getid — узнать свой Telegram ID\n"
+        "   (нужен, чтобы админ мог добавить подружку)\n\n"
+        "🌸 Бот создан Алиной. Вопросы и пожелания — ей же 😘"
+    )
+
 # ========== ПРИВЕТСТВИЕ ==========
 @bot.message_handler(commands=['start'])
 def start(message):
     user_id = message.from_user.id
     name = message.from_user.first_name or "Подруга"
     
-    if user_id not in get_allowed_users():
-        if user_id == ADMIN_ID:
-            pass
-        else:
-            bot.reply_to(message,
-                "🔒 Доступ закрыт\n\n"
-                "Этот бот работает по приглашению.\n"
-                "Напиши Алине, она добавит тебя командой /adduser",
-                parse_mode='Markdown')
-            return
+    if not is_allowed(user_id):
+        bot.reply_to(message,
+            f"🌸 Привет, {name}!\n\n"
+            "🔒 Доступ закрыт\n\n"
+            "Этот бот работает по приглашению.\n\n"
+            "Чтобы получить доступ:\n"
+            "1. Напиши /getid — узнай свой ID\n"
+            "2. Перешли этот ID Алине\n"
+            "3. Она добавит тебя командой /adduser\n\n"
+            "После добавления напиши /start снова — и я расскажу всё о своих возможностях 😘")
+        return
     
-    if is_admin(user_id):
-        welcome = (
-            f"🌸 Привет, {name}!\n\n"
-            "Я — Твоя финансовая нянька с характером 💅\n"
-            "Создала меня Алина — она, кстати, сама ахуеть это сделала 🔥\n\n"
-            "Я буду помогать тебе не проедать всё до копейки, откладывать на золотое яблочко и вовремя говорить: «Малыха, ты поскромней живи».\n\n"
-            "📚 Что я умею:\n\n"
-            "- 💰 Доходы — когда тебе кто-то закинул денег\n"
-            "- 💸 Расходы — когда ты снова купила свечку за 2000 ₽\n"
-            "- 🏦 Отложить — копим на мечту\n"
-            "- 📈 Бюджет — ставим лимит, чтобы ты не ушла в минус\n"
-            "- 📊 График трат — чтобы увидеть, куда улетела зарплата\n"
-            "- 📋 История — список твоих грехов\n\n"
-            "🎀 Как со мной общаться?\n\n"
-            "Внизу есть кнопки — просто жми на них.\n\n"
-            "👯‍♀️ Для подружек\n\n"
-            "Ты можешь дать доступ подружкам через /adduser — у каждой будет свой личный кабинет.\n\n"
-            "---\n"
-            "🍀 Погнали, красотка? Жми на кнопку и не стесняйся своих трат! 😘"
-        )
-        bot.reply_to(message, welcome, reply_markup=get_admin_keyboard())
-    else:
-        welcome = (
-            f"🌸 Привет, {name}!\n\n"
-            "Я — Твоя финансовая нянька 💅\n"
-            "Создала меня Алина 🔥\n\n"
-            "Ты можешь смотреть баланс, отчёты и графики.\n"
-            "А доходы, расходы и бюджет настраивает администратор.\n\n"
-            "👇 Кнопки внизу"
-        )
-        bot.reply_to(message, welcome, reply_markup=get_user_keyboard())
+    welcome = (
+        f"🌸 Привет, {name}!\n\n"
+        "Я — Твоя финансовая нянька с характером 💅\n"
+        "Создала меня Алина — она, кстати, сама ахуеть это сделала 🔥\n\n"
+        "Я буду помогать тебе не проедать всё до копейки, откладывать на золотое яблочко и вовремя говорить: «Малыха, ты поскромней живи».\n\n"
+        f"{get_instructions()}\n\n"
+        "👇 Кнопки внизу — просто жми на них!\n\n"
+        "🍀 Погнали, красотка! 😘"
+    )
+    bot.reply_to(message, welcome, reply_markup=get_keyboard_for_user(user_id))
 
 @bot.message_handler(commands=['getid'])
 def get_id(message):
     user_id = message.from_user.id
     bot.reply_to(message,
-        f"🆔 Твой ID: `{user_id}`\n\nПерешли этот ID Алине.",
+        f"🆔 Твой Telegram ID: `{user_id}`\n\n"
+        "Перешли этот ID Алине, чтобы она добавила тебя в бота.\n\n"
+        "После добавления напиши /start",
         parse_mode='Markdown')
 
-# ========== УПРАВЛЕНИЕ ПОЛЬЗОВАТЕЛЯМИ ==========
+# ========== УПРАВЛЕНИЕ ПОЛЬЗОВАТЕЛЯМИ (ТОЛЬКО ДЛЯ АДМИНА) ==========
 @bot.message_handler(commands=['adduser'])
 def add_user(message):
     if not is_admin(message.from_user.id):
+        bot.reply_to(message, "❌ Эта команда только для администратора")
         return
     try:
         parts = message.text.split()
@@ -380,10 +403,13 @@ def add_user(message):
         save_user_data(new_user_id, user_data)
         
         bot.reply_to(message, f"✅ Пользователь `{new_user_id}` добавлен", parse_mode='Markdown')
+        
+        # Отправляем приветствие новому пользователю
         try:
             bot.send_message(new_user_id, 
-                "🎉 Тебе открыли доступ к финансовому боту!\n\n"
-                "Напиши /start, чтобы начать.")
+                f"🎉 Тебе открыли доступ к финансовому боту!\n\n"
+                f"Напиши /start, чтобы начать.\n\n"
+                f"{get_instructions()}")
         except:
             pass
     except:
@@ -392,6 +418,7 @@ def add_user(message):
 @bot.message_handler(commands=['removeuser'])
 def remove_user(message):
     if not is_admin(message.from_user.id):
+        bot.reply_to(message, "❌ Эта команда только для администратора")
         return
     try:
         parts = message.text.split()
@@ -412,6 +439,7 @@ def remove_user(message):
 @bot.message_handler(commands=['users'])
 def list_users(message):
     if not is_admin(message.from_user.id):
+        bot.reply_to(message, "❌ Эта команда только для администратора")
         return
     allowed = get_allowed_users()
     if not allowed:
@@ -428,11 +456,16 @@ def user_management_button(message):
     if not is_admin(message.from_user.id):
         return
     bot.reply_to(message,
-        "👥 Управление\n━━━━━━━━━━━━━━━\n\n"
-        "/adduser ID — добавить\n"
+        "👥 Управление пользователями\n━━━━━━━━━━━━━━━\n\n"
+        "/adduser ID — добавить подружку\n"
         "/removeuser ID — удалить\n"
-        "/users — список\n"
-        "/getid — свой ID")
+        "/users — список всех\n"
+        "/getid — узнать свой ID\n\n"
+        "Как добавить подружку:\n"
+        "1. Она пишет /getid\n"
+        "2. Пересылает тебе ID\n"
+        "3. Ты пишешь /adduser её ID\n"
+        "4. Готово! Она получает доступ")
 
 # ========== БАЛАНС ==========
 @bot.message_handler(func=lambda m: m.text == "💎 Баланс")
@@ -463,8 +496,7 @@ def button_balance(message):
         phrase = get_next_phrase(user_id, "low_balance").format(rub=free_rub)
         text += f"\n\n{phrase}"
     
-    keyboard = get_admin_keyboard() if is_admin(user_id) else get_user_keyboard()
-    bot.reply_to(message, text, reply_markup=keyboard)
+    bot.reply_to(message, text, reply_markup=get_keyboard_for_user(user_id))
 
 # ========== ОТЧЁТЫ ==========
 @bot.message_handler(func=lambda m: m.text == "📊 Отчёты")
@@ -476,12 +508,15 @@ def button_reports(message):
 # ========== ДОХОД ==========
 @bot.message_handler(func=lambda m: m.text == "➕ Доход")
 def button_income(message):
-    if not is_admin(message.from_user.id):
+    if not is_allowed(message.from_user.id):
         return
     msg = bot.reply_to(message, "💰 Сумма и описание:\n\nПример: 5000 зарплата")
     bot.register_next_step_handler(msg, process_income_amount)
 
 def process_income_amount(message):
+    user_id = message.from_user.id
+    if not is_allowed(user_id):
+        return
     try:
         parts = message.text.split()
         amount = float(parts[0])
@@ -491,18 +526,21 @@ def process_income_amount(message):
         bot.temp_data[message.chat.id] = {"amount": amount, "comment": comment}
         bot.send_message(message.chat.id, "💱 Выбери валюту:", reply_markup=get_currency_keyboard("income"))
     except:
-        phrase = get_next_phrase(message.from_user.id, "error")
+        phrase = get_next_phrase(user_id, "error")
         bot.reply_to(message, phrase)
 
 # ========== РАСХОД ==========
 @bot.message_handler(func=lambda m: m.text == "➖ Расход")
 def button_expense(message):
-    if not is_admin(message.from_user.id):
+    if not is_allowed(message.from_user.id):
         return
     msg = bot.reply_to(message, "💸 Сумма и описание:\n\nПример: 1200 продукты")
     bot.register_next_step_handler(msg, process_expense_amount)
 
 def process_expense_amount(message):
+    user_id = message.from_user.id
+    if not is_allowed(user_id):
+        return
     try:
         parts = message.text.split()
         amount = float(parts[0])
@@ -512,20 +550,20 @@ def process_expense_amount(message):
         bot.temp_data[message.chat.id] = {"amount": amount, "comment": comment, "need_category": True}
         bot.send_message(message.chat.id, "💱 Выбери валюту:", reply_markup=get_currency_keyboard("expense"))
     except:
-        phrase = get_next_phrase(message.from_user.id, "error")
+        phrase = get_next_phrase(user_id, "error")
         bot.reply_to(message, phrase)
 
 # ========== ОТЛОЖЕННЫЕ ==========
 @bot.message_handler(func=lambda m: m.text == "🏦 Отложить")
 def button_savings(message):
-    if not is_admin(message.from_user.id):
+    if not is_allowed(message.from_user.id):
         return
     bot.send_message(message.chat.id, "🏦 Управление отложенными:", reply_markup=get_savings_keyboard())
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("savings_"))
 def handle_savings_callback(call):
-    if not is_admin(call.from_user.id):
-        bot.answer_callback_query(call.id, "Только администратор")
+    if not is_allowed(call.from_user.id):
+        bot.answer_callback_query(call.id, "Нет доступа")
         return
     
     if call.data == "savings_add":
@@ -543,6 +581,8 @@ def handle_savings_callback(call):
 
 def process_savings_add(message):
     user_id = message.from_user.id
+    if not is_allowed(user_id):
+        return
     try:
         parts = message.text.split()
         amount = float(parts[0])
@@ -569,6 +609,8 @@ def process_savings_add(message):
 
 def process_savings_remove(message):
     user_id = message.from_user.id
+    if not is_allowed(user_id):
+        return
     try:
         parts = message.text.split()
         amount = float(parts[0])
@@ -594,6 +636,8 @@ def process_savings_remove(message):
 
 def process_savings_spend(message):
     user_id = message.from_user.id
+    if not is_allowed(user_id):
+        return
     try:
         parts = message.text.split()
         amount = float(parts[0])
@@ -633,6 +677,8 @@ def process_savings_spend(message):
 
 def show_savings_list(message):
     user_id = message.from_user.id
+    if not is_allowed(user_id):
+        return
     data = load_user_data(user_id)
     if not data["savings"]:
         bot.reply_to(message, "🏦 Нет отложенных денег")
@@ -645,7 +691,7 @@ def show_savings_list(message):
 # ========== БЮДЖЕТ ==========
 @bot.message_handler(func=lambda m: m.text == "📈 Бюджет")
 def button_budget(message):
-    if not is_admin(message.from_user.id):
+    if not is_allowed(message.from_user.id):
         return
     user_id = message.from_user.id
     data = load_user_data(user_id)
@@ -681,7 +727,7 @@ def button_budget(message):
             phrase = get_next_phrase(user_id, "budget_low").format(remaining=int(remaining), days=days_left)
             text += f"\n{phrase}"
         
-        bot.reply_to(message, text)
+        bot.reply_to(message, text, reply_markup=get_keyboard_for_user(user_id))
     else:
         bot.reply_to(message, 
             "📈 Бюджет не установлен\n\n"
@@ -690,7 +736,7 @@ def button_budget(message):
 
 @bot.message_handler(commands=['budget'])
 def set_budget(message):
-    if not is_admin(message.from_user.id):
+    if not is_allowed(message.from_user.id):
         return
     try:
         parts = message.text.split()
@@ -796,7 +842,7 @@ def show_history(message):
 # ========== ОТМЕНИТЬ ==========
 @bot.message_handler(func=lambda m: m.text == "🕊️ Отменить")
 def button_undo(message):
-    if not is_admin(message.from_user.id):
+    if not is_allowed(message.from_user.id):
         return
     user_id = message.from_user.id
     data = load_user_data(user_id)
@@ -823,7 +869,7 @@ def button_undo(message):
 # ========== НАСТРОЙКИ ==========
 @bot.message_handler(func=lambda m: m.text == "⚙️ Настройки")
 def button_settings(message):
-    if not is_admin(message.from_user.id):
+    if not is_allowed(message.from_user.id):
         return
     keyboard = InlineKeyboardMarkup()
     keyboard.add(InlineKeyboardButton("💰 Установить остаток", callback_data="settings_balance"))
@@ -833,8 +879,8 @@ def button_settings(message):
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("settings_"))
 def handle_settings_callback(call):
-    if not is_admin(call.from_user.id):
-        bot.answer_callback_query(call.id, "Только администратор")
+    if not is_allowed(call.from_user.id):
+        bot.answer_callback_query(call.id, "Нет доступа")
         return
     
     if call.data == "settings_balance":
@@ -850,7 +896,7 @@ def handle_settings_callback(call):
 
 @bot.callback_query_handler(func=lambda call: call.data == "confirm_clear")
 def confirm_clear(call):
-    if not is_admin(call.from_user.id):
+    if not is_allowed(call.from_user.id):
         return
     user_id = call.from_user.id
     data = load_user_data(user_id)
@@ -865,6 +911,8 @@ def confirm_clear(call):
 
 def process_set_balance(message):
     user_id = message.from_user.id
+    if not is_allowed(user_id):
+        return
     try:
         parts = message.text.split()
         currency = parts[0]
@@ -893,8 +941,8 @@ def handle_currency_callback(call):
             del bot.temp_data[call.message.chat.id]
         return
     
-    if not is_admin(call.from_user.id):
-        bot.answer_callback_query(call.id, "Только администратор")
+    if not is_allowed(call.from_user.id):
+        bot.answer_callback_query(call.id, "Нет доступа")
         return
     
     user_data = getattr(bot, "temp_data", {}).get(call.message.chat.id, {})
@@ -1322,6 +1370,7 @@ print("🌸 Бот Алины запущен")
 print(f"👑 Админ: {ADMIN_ID}")
 print("💰 Мультипользовательский режим")
 print("🎲 Фразы по очереди (по кругу)")
+print("📚 Есть инструкция для пользователей")
 print("🕐 Московское время")
 
 start_monthly_checker()
