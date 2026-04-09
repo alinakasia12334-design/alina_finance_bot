@@ -185,10 +185,14 @@ def get_back_keyboard():
 
 # ========== ПРИВЕТСТВИЕ ==========
 @bot.message_handler(commands=['start'])
-@require_auth
 def start(message):
     user_id = message.from_user.id
     name = message.from_user.first_name or "Подруга"
+    
+    if not is_allowed(user_id):
+        bot.reply_to(message, f"🌸 Привет, {name}!\n\n🔒 Доступ закрыт\n\nЧтобы получить доступ:\n1. Напиши /getid — узнай свой ID\n2. Перешли этот ID Алине\n\nПосле добавления напиши /start снова 😘")
+        return
+    
     reset_monthly_stats_if_needed(user_id)
     
     welcome = f"🌸 Привет, {name}!\n\nЯ — Твоя финансовая нянька 💅\nСоздала меня **Алина** 🔥\n\n📚 ИНСТРУКЦИЯ:\n💎 Баланс — свободные и отложенные\n➕ Доход — сумма + описание\n➖ Расход — сумма + описание → категория → совет\n🎯 Мои цели — создать/отложить/потратить\n📈 Бюджет — /budget 50000\n📂 Категории трат — проценты + совет\n📋 История — последние операции\n🕊️ Отменить — откат\n\n👇 Кнопки внизу! 😘"
@@ -314,6 +318,9 @@ def validate_amount(amount):
     except:
         return None, "❌ Введи число"
 
+# Временное хранилище
+temp_data = {}
+
 @bot.callback_query_handler(func=lambda call: call.data.startswith("goal_") or call.data.startswith("goals_") or call.data == "back_to_main")
 def handle_goals_callback(call):
     if not is_allowed(call.from_user.id):
@@ -368,7 +375,6 @@ def handle_goals_callback(call):
     elif call.data.startswith("goal_select_delete_"):
         idx = int(call.data.split("_")[3])
         goal = data["goals"][idx]
-        # Возвращаем отложенные деньги
         data["rub"] += goal["current"]
         data["goals"].pop(idx)
         save_user_data(user_id, data)
@@ -448,7 +454,6 @@ def process_goal_spend_amount(message, goal_idx):
     
     goal["current"] -= amount
     
-    # Записываем транзакцию и обновляем статистику
     now = get_moscow_time()
     transaction = {"date": now.strftime("%Y-%m-%d %H:%M:%S"), "type": "expense", "amount": int(amount), "currency": "₽", "comment": f"{goal['name']} (из отложенного)", "category": "other", "sign": '-'}
     data["transactions"].append(transaction)
@@ -466,65 +471,7 @@ def process_goal_spend_amount(message, goal_idx):
     
     button_balance(message)
 
-# ========== КАТЕГОРИИ ТРАТ ==========
-@bot.message_handler(func=lambda m: m.text == "📂 Категории трат")
-@require_auth
-def button_categories(message):
-    user_id = message.from_user.id
-    data = reset_monthly_stats_if_needed(user_id)
-    stats = data.get("current_month_stats", {})
-    total = data.get("current_month_total", 0)
-    month_name = ["января", "февраля", "марта", "апреля", "мая", "июня", "июля", "августа", "сентября", "октября", "ноября", "декабря"][get_moscow_time().month-1]
-    
-    if total == 0:
-        bot.reply_to(message, f"📂 КАТЕГОРИИ ТРАТ\n━━━━━━━━━━━━━━━\n\n📊 АНАЛИЗ ЗА {month_name.upper()}:\n💰 Всего потрачено: 0 ₽\n\nПока нет трат за этот месяц.", reply_markup=get_main_keyboard(user_id))
-        return
-    
-    cat_list = [(cat_key, amount, (amount / total) * 100) for cat_key, amount in stats.items() if amount > 0]
-    cat_list.sort(key=lambda x: x[1], reverse=True)
-    
-    text = f"📂 КАТЕГОРИИ ТРАТ\n━━━━━━━━━━━━━━━\n\n📊 АНАЛИЗ ЗА {month_name.upper()}:\n💰 Всего потрачено: {total} ₽\n\n" + "\n".join([f"{CATEGORIES[cat_key]}: {percent:.0f}% ({amount} ₽)" for cat_key, amount, percent in cat_list])
-    
-    keyboard = InlineKeyboardMarkup()
-    keyboard.add(InlineKeyboardButton("💡 Хочу совет", callback_data="advice_main"))
-    bot.reply_to(message, text, reply_markup=keyboard)
-
-@bot.callback_query_handler(func=lambda call: call.data.startswith("advice_"))
-def handle_advice_callback(call):
-    if not is_allowed(call.from_user.id):
-        bot.answer_callback_query(call.id, "Нет доступа")
-        return
-    
-    user_id = call.from_user.id
-    name = call.from_user.first_name or "Подруга"
-    name_form = get_name_form(name)
-    data = reset_monthly_stats_if_needed(user_id)
-    
-    stats = data.get("current_month_stats", {})
-    cat_list = [(cat_key, amount) for cat_key, amount in stats.items() if amount > 0]
-    
-    if not cat_list:
-        bot.edit_message_text("Пока нет трат за этот месяц, не могу дать совет 😢", call.message.chat.id, call.message.message_id)
-    else:
-        top_cat = max(cat_list, key=lambda x: x[1])
-        cat_name = CATEGORIES[top_cat[0]]
-        advice = get_next_advice(user_id, top_cat[0]).format(name=name_form)
-        text = f"💡 ХОЧУ СОВЕТ\n━━━━━━━━━━━━━━━\n\n{name_form}, больше всего денег уходит на {cat_name} — {top_cat[1]} ₽\n\n🎯 {advice}"
-        bot.edit_message_text(text, call.message.chat.id, call.message.message_id)
-    
-    bot.answer_callback_query(call.id)
-
-# ========== ОТЧЁТЫ ==========
-@bot.message_handler(func=lambda m: m.text == "📊 Отчёты")
-@require_auth
-def button_reports(message):
-    keyboard = InlineKeyboardMarkup(row_width=1)
-    keyboard.add(InlineKeyboardButton("📅 Сегодня", callback_data="report_today"), InlineKeyboardButton("📆 За день", callback_data="report_single_day"), InlineKeyboardButton("🗓️ За период", callback_data="report_period"), InlineKeyboardButton("📊 За месяц", callback_data="report_monthly"))
-    bot.send_message(message.chat.id, "📅 Выбери отчёт:", reply_markup=keyboard)
-
 # ========== ДОХОД И РАСХОД ==========
-temp_data = {}
-
 @bot.message_handler(func=lambda m: m.text == "➕ Доход")
 @require_auth
 def button_income(message):
@@ -621,9 +568,9 @@ def handle_currency_callback(call):
             bot.edit_message_text("❌ Расход в долларах пока не поддерживается. Используй рубли.", call.message.chat.id, call.message.message_id)
         else:
             temp_data[call.message.chat.id]["currency"] = currency
-            bot.edit_message_text("📂 Выбери категорию:", call.message.chat.id, call.message.message_id, reply_markup=get_category_keyboard())
+            bot.send_message(call.message.chat.id, "📂 Выбери категорию расхода:", reply_markup=get_category_keyboard())
+            bot.delete_message(call.message.chat.id, call.message.message_id)
     
-    temp_data.pop(call.message.chat.id, None)
     bot.answer_callback_query(call.id)
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("cat_"))
@@ -633,7 +580,16 @@ def handle_category_callback(call):
         temp_data.pop(call.message.chat.id, None)
         return
     
+    if not is_allowed(call.from_user.id):
+        bot.answer_callback_query(call.id, "Нет доступа")
+        return
+    
     category_key = call.data.split("_")[1]
+    
+    if category_key not in CATEGORIES:
+        bot.answer_callback_query(call.id, "Ошибка: категория не найдена")
+        return
+    
     user_data = temp_data.get(call.message.chat.id, {})
     amount = user_data.get("amount")
     comment = user_data.get("comment", "")
@@ -641,6 +597,7 @@ def handle_category_callback(call):
     
     if not amount:
         bot.answer_callback_query(call.id, "Ошибка")
+        temp_data.pop(call.message.chat.id, None)
         return
     
     user_id = call.from_user.id
@@ -650,14 +607,78 @@ def handle_category_callback(call):
     data["rub"] -= int(amount)
     data["current_month_stats"][category_key] = data["current_month_stats"].get(category_key, 0) + int(amount)
     data["current_month_total"] += int(amount)
-    data["transactions"].append({"date": now.strftime("%Y-%m-%d %H:%M:%S"), "type": "expense", "amount": int(amount), "currency": "₽", "comment": comment, "category": category_key, "sign": '-'})
+    
+    transaction = {
+        "date": now.strftime("%Y-%m-%d %H:%M:%S"),
+        "type": "expense",
+        "amount": int(amount),
+        "currency": "₽",
+        "comment": comment,
+        "category": category_key,
+        "sign": '-'
+    }
+    data["transactions"].append(transaction)
     save_user_data(user_id, data)
     
     name = call.from_user.first_name or "Подруга"
-    advice = get_next_advice(user_id, category_key).format(name=get_name_form(name))
-    bot.edit_message_text(f"✅ РАСХОД {int(amount)}₽ {comment}\n📂 {CATEGORIES[category_key]}\n🕐 {now.strftime('%H:%M')} МСК\n\n💡 {advice}", call.message.chat.id, call.message.message_id)
+    name_form = get_name_form(name)
+    advice = get_next_advice(user_id, category_key).format(name=name_form)
+    
+    bot.edit_message_text(
+        f"✅ РАСХОД {int(amount)}₽ {comment}\n📂 {CATEGORIES[category_key]}\n🕐 {now.strftime('%H:%M')} МСК\n\n💡 {advice}",
+        call.message.chat.id,
+        call.message.message_id
+    )
     
     temp_data.pop(call.message.chat.id, None)
+    bot.answer_callback_query(call.id)
+
+# ========== КАТЕГОРИИ ТРАТ ==========
+@bot.message_handler(func=lambda m: m.text == "📂 Категории трат")
+@require_auth
+def button_categories(message):
+    user_id = message.from_user.id
+    data = reset_monthly_stats_if_needed(user_id)
+    stats = data.get("current_month_stats", {})
+    total = data.get("current_month_total", 0)
+    month_name = ["января", "февраля", "марта", "апреля", "мая", "июня", "июля", "августа", "сентября", "октября", "ноября", "декабря"][get_moscow_time().month-1]
+    
+    if total == 0:
+        bot.reply_to(message, f"📂 КАТЕГОРИИ ТРАТ\n━━━━━━━━━━━━━━━\n\n📊 АНАЛИЗ ЗА {month_name.upper()}:\n💰 Всего потрачено: 0 ₽\n\nПока нет трат за этот месяц.", reply_markup=get_main_keyboard(user_id))
+        return
+    
+    cat_list = [(cat_key, amount, (amount / total) * 100) for cat_key, amount in stats.items() if amount > 0]
+    cat_list.sort(key=lambda x: x[1], reverse=True)
+    
+    text = f"📂 КАТЕГОРИИ ТРАТ\n━━━━━━━━━━━━━━━\n\n📊 АНАЛИЗ ЗА {month_name.upper()}:\n💰 Всего потрачено: {total} ₽\n\n" + "\n".join([f"{CATEGORIES[cat_key]}: {percent:.0f}% ({amount} ₽)" for cat_key, amount, percent in cat_list])
+    
+    keyboard = InlineKeyboardMarkup()
+    keyboard.add(InlineKeyboardButton("💡 Хочу совет", callback_data="advice_main"))
+    bot.reply_to(message, text, reply_markup=keyboard)
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("advice_"))
+def handle_advice_callback(call):
+    if not is_allowed(call.from_user.id):
+        bot.answer_callback_query(call.id, "Нет доступа")
+        return
+    
+    user_id = call.from_user.id
+    name = call.from_user.first_name or "Подруга"
+    name_form = get_name_form(name)
+    data = reset_monthly_stats_if_needed(user_id)
+    
+    stats = data.get("current_month_stats", {})
+    cat_list = [(cat_key, amount) for cat_key, amount in stats.items() if amount > 0]
+    
+    if not cat_list:
+        bot.edit_message_text("Пока нет трат за этот месяц, не могу дать совет 😢", call.message.chat.id, call.message.message_id)
+    else:
+        top_cat = max(cat_list, key=lambda x: x[1])
+        cat_name = CATEGORIES[top_cat[0]]
+        advice = get_next_advice(user_id, top_cat[0]).format(name=name_form)
+        text = f"💡 ХОЧУ СОВЕТ\n━━━━━━━━━━━━━━━\n\n{name_form}, больше всего денег уходит на {cat_name} — {top_cat[1]} ₽\n\n🎯 {advice}"
+        bot.edit_message_text(text, call.message.chat.id, call.message.message_id)
+    
     bot.answer_callback_query(call.id)
 
 # ========== БЮДЖЕТ ==========
@@ -749,7 +770,6 @@ def button_undo(message):
             data["usd"] += last["amount"]
         else:
             data["rub"] += last["amount"]
-            # Обновляем статистику категорий
             if last.get("category") and last["currency"] == "₽":
                 data["current_month_stats"][last["category"]] = max(0, data["current_month_stats"].get(last["category"], 0) - last["amount"])
                 data["current_month_total"] = max(0, data.get("current_month_total", 0) - last["amount"])
@@ -822,7 +842,14 @@ def process_set_balance(message):
     except:
         bot.reply_to(message, "❌ Формат: $ 1000 или ₽ 50000")
 
-# ========== ОТЧЁТНЫЕ ФУНКЦИИ ==========
+# ========== ОТЧЁТЫ ==========
+@bot.message_handler(func=lambda m: m.text == "📊 Отчёты")
+@require_auth
+def button_reports(message):
+    keyboard = InlineKeyboardMarkup(row_width=1)
+    keyboard.add(InlineKeyboardButton("📅 Сегодня", callback_data="report_today"), InlineKeyboardButton("📆 За день", callback_data="report_single_day"), InlineKeyboardButton("🗓️ За период", callback_data="report_period"), InlineKeyboardButton("📊 За месяц", callback_data="report_monthly"))
+    bot.send_message(message.chat.id, "📅 Выбери отчёт:", reply_markup=keyboard)
+
 def send_today_report(chat_id, user_id):
     data = load_user_data(user_id)
     now = get_moscow_time()
@@ -1010,7 +1037,6 @@ def start_background_checker():
 
 print("🌸 Бот Алины запущен")
 print(f"👑 Админ: {ADMIN_ID}")
-print("💰 Оптимизированная версия")
 print("✅ Все функции работают")
 print("🕐 Московское время")
 
