@@ -1,6 +1,4 @@
-import os
-
-TOKEN = "8692541391:AAH6Cf8eh_afsynkA277SJ-_28ihs2VEutI"
+TOKEN = "8692541391:AAG3AU3jwXAWP5kXUpWp7-oCASkU-r0RiTc"
 ADMIN_ID = 463620997
 DB_PATH = "bot_data.sqlite3"
 SUPPORT_CONTACT = "@privetetoalina"
