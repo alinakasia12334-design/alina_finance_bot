@@ -1,7 +1,1 @@
-diff --git a/requirements.txt b/requirements.txt
-new file mode 100644
-index 0000000000000000000000000000000000000000..278b7bc9a0704bc35c6c5869b6d2c09fb565a755
---- /dev/null
-+++ b/requirements.txt
-@@ -0,0 +1 @@
-+pyTelegramBotAPI>=4.18.0
+pyTelegramBotAPI
